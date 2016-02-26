@@ -1,7 +1,7 @@
 {
     "name": "Fathym",
-    "version": "0.0.19",
+    "version": "0.0.2",
     "author": "Michael Everett <michael.everett@fathym.com>",
     "license": "MIT",
-    "description": "Fathym & Photon Integration"
+    "description": "Fathym & Photon Integration (http://fathym.com) (http://particle.io)"
 }

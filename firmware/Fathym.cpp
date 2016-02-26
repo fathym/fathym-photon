@@ -22,7 +22,7 @@ void Fathym::init(char * server, uint16_t port, char * username, char * password
   _keepAlive = MQTT_KEEPALIVE;
 
   // Publishing rate
-  _publishRate = FATHYM_PUBLISH_RATE;
+  setPublishRate(FATHYM_PUBLISH_RATE); // this makes sure the keep alive is greater than publish rate
 
   // Setup DEBUG LED pin if configured
   if (FATHYM_USE_DEBUG_LED) {

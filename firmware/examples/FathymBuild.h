@@ -1,3 +1,6 @@
+// Tells the library that the current project is building via local Particle Dev
+//#define LOCAL_BUILD true
+
 // The name of the device ID property to use
 #define FATHYM_ID_PROPERTY "id"
 
@@ -43,7 +46,9 @@
 // Default to standard MQTT port
 #define MQTT_DEFAULT_PORT 1883
 
-// The number of seconds to use for the MQTT connection keep alive
+// The number of seconds to use for the MQTT connection keep alive.
+// The keep alive needs to be longer than your publish rate otherwise
+// the connection will continuously time out/reconnect after one publish.
 #define MQTT_KEEPALIVE 20
 
 // The maximum size of the MQTT header in bytes
