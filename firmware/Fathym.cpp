@@ -1,8 +1,23 @@
 #include "Fathym.h"
 
+// Handler that receives MQTT messages for this device
+Fathym * instance = NULL;
+
+void mqttHandler(char * topic, byte * payload, unsigned int length) {
+  char p[length + 1];
+  memcpy(p, payload, length);
+  p[length] = NULL;
+  String message(p);
+  Serial.print("received: ");
+  Serial.println(message);
+
+  if (instance != NULL) {
+      instance->receive(topic, payload, length);
+  }
+}
+
 // Constructor
 Fathym::Fathym(char * server, char * username, char * password) {
-  // Connection
   init(server, FATHYM_DEFAULT_PORT, username, password);
 }
 
@@ -13,6 +28,8 @@ Fathym::Fathym(char * server, uint16_t port, char * username, char * password) {
 
 // Global initialization
 void Fathym::init(char * server, uint16_t port, char * username, char * password) {
+  instance = this;
+
   // Connection
   _server = server;
   _port = port;
@@ -20,6 +37,8 @@ void Fathym::init(char * server, uint16_t port, char * username, char * password
   _password = password;
   _lastTimeSync = 0;
   _keepAlive = MQTT_KEEPALIVE;
+  _subscribed = false;
+  _error = ERROR_NONE;
 
   // Publishing rate
   setPublishRate(FATHYM_PUBLISH_RATE); // this makes sure the keep alive is greater than publish rate
@@ -36,6 +55,10 @@ void Fathym::init(char * server, uint16_t port, char * username, char * password
   // Assign the Photon's device ID for the ID in published messages
   _id = System.deviceID();
   json[FATHYM_ID_PROPERTY] = _id.c_str();
+
+  // Set the send/receive topics using the device ID
+  _sendTopic = String("fathym.devices.from.") + _id;
+  _receiveTopic = String("fathym.devices.to.") + _id;
 
   // If adding a time stamp, setup time zone
   if (FATHYM_ADD_TIMESTAMP) {
@@ -61,6 +84,11 @@ void Fathym::nameHandler(const char * topic, const char * data) {
 
 // Begins a Fathym message update cycle; performs connection maintenance and prepares the connection for publishing.
 void Fathym::beginUpdate(void) {
+  // If the error state exists is non-critical, clear it
+  if (_error != ERROR_NONE && _error < ERROR_CRITICAL) {
+    _error = ERROR_NONE;
+  }
+
   // Get the current device uptime
   unsigned long uptime = millis();
 
@@ -87,6 +115,11 @@ void Fathym::beginUpdate(void) {
   // If connected, update the underlying MQTT client message processing
   if (isConnected()) {
     _mqtt->loop();
+
+    // Subscribe to receive messages
+    if (!_subscribed) {
+        _subscribed = _mqtt->subscribe(_receiveTopic);
+    }
   }
   // Otherwise attempt to reconnect
   else {
@@ -123,12 +156,17 @@ bool Fathym::connect(void)
 {
   // If the MQTT client hasn't been created yet, create it
   if (_mqtt == NULL) {
-    _mqtt = new MQTT(_server, _port, NULL);
+    _mqtt = new MQTT(_server, _port, mqttHandler);
     _mqtt->setKeepAlive(_keepAlive);
   }
 
   // Connect using the MQTT client
   _mqtt->connect(_server, _username, _password);
+
+  // Subscribe to receive messages
+  if (!_subscribed) {
+      _subscribed = _mqtt->subscribe(_receiveTopic);
+  }
 
   // Check for a valid connection state and report accordingly
   if (_mqtt->isConnected()) {
@@ -208,7 +246,7 @@ bool Fathym::publishRaw(const char * topic, const char * payload) {
 
 // Publish the current message data to the connected message broker/server
 bool Fathym::publish(void) {
-  return publish(FATHYM_DEFAULT_TOPIC);
+  return publish(_sendTopic); // publish to the default send topic for the device
 }
 
 // Publish the current message data to the connected message broker/server
@@ -218,39 +256,50 @@ bool Fathym::publish(const char * topic) {
   }
 
   JsonObject & json = *_json;
+  const char * payload;
 
-  // If configured to add the device's cloud name, include it
-  if (FATHYM_ADD_DEVICE_NAME) {
-    json[FATHYM_DEVICE_NAME_PROPERTY] = _name.c_str();
+  // If there is no current error state, publish data
+  if (_error == ERROR_NONE) {
+    // If configured to add the device's cloud name, include it
+    if (FATHYM_ADD_DEVICE_NAME) {
+      json[FATHYM_DEVICE_NAME_PROPERTY] = _name.c_str();
+    }
+
+    // If set to include the device uptime, include it
+    if (FATHYM_ADD_UPTIME) {
+      json[FATHYM_UPTIME_PROPERTY] = millis();
+    }
+
+    // If set to include device free memory, include it
+    if (FATHYM_ADD_FREE_MEMORY) {
+      json[FATHYM_FREE_MEMORY_PROPERTY] = System.freeMemory();
+    }
+
+    // If set to use time stamp, add the current time stamp
+    if (FATHYM_ADD_TIMESTAMP) {
+      time_t time = Time.now();
+      _timeStamp = Time.format(time, TIME_FORMAT_ISO8601_FULL);
+      json[FATHYM_TIMESTAMP_PROPERTY] = _timeStamp.c_str();
+    }
+
+    // Serialize current message values
+    size_t maxDataSize = MQTT_MAX_PACKET_SIZE - MQTT_MAX_HEADER_SIZE; // leave some size for the MQTT header
+    char buffer[maxDataSize]; // create a buffer of the max payload size
+    payload = buffer;
+    size_t written = json.printTo(buffer, maxDataSize);
+
+    // Check to see that the JSON object is properly terminated
+    if (buffer[written - 1] != '}') {
+      _error = ERROR_JSON_BUFFER_MAX;
+    }
   }
 
-  // If set to include the device uptime, include it
-  if (FATHYM_ADD_UPTIME) {
-    json[FATHYM_UPTIME_PROPERTY] = millis();
-  }
-
-  // If set to include device free memory, include it
-  if (FATHYM_ADD_FREE_MEMORY) {
-    json[FATHYM_FREE_MEMORY_PROPERTY] = System.freeMemory();
-  }
-
-  // If set to use time stamp, add the current time stamp
-  if (FATHYM_ADD_TIMESTAMP) {
-    time_t time = Time.now();
-    _timeStamp = Time.format(time, TIME_FORMAT_ISO8601_FULL);
-    json[FATHYM_TIMESTAMP_PROPERTY] = _timeStamp.c_str();
-  }
-
-  // Serialize current message values
-  size_t maxDataSize = MQTT_MAX_PACKET_SIZE - MQTT_MAX_HEADER_SIZE; // leave some size for the MQTT header
-  char buffer[maxDataSize]; // create a buffer of the max payload size
-  const char * payload = buffer;
-  size_t written = json.printTo(buffer, maxDataSize);
-
-  // Check to see that the JSON object is properly terminated
-  if (buffer[written - 1] != '}') {
-    _error = String("{\"" + _idProp + "\":\"" + _id + "\",\"error\":\"JSON buffer exceeded\"}");
-    payload = _error.c_str();
+  // If there is an error, send an error message payload instead with the error code
+  if (_error != ERROR_NONE) {
+    _errorJson = String("{\"" + _idProp + "\":\"" + _id + "\",\"error\":");
+    _errorJson.concat(_error);
+    _errorJson.concat("}");
+    payload = _errorJson.c_str();
   }
 
   // Publish to the given topic on the connected message broker/server
@@ -261,9 +310,19 @@ bool Fathym::publish(const char * topic) {
     digitalWrite(FATHYM_DEBUG_LED_PIN, HIGH);
     delay(FATHYM_DEBUG_PUBLISH_DELAY);
     digitalWrite(FATHYM_DEBUG_LED_PIN, LOW);
+
+    // If there is an error state, flash twice to indicate that
+    if (_error != ERROR_NONE) {
+      flash(4, 75);
+    }
   }
 
   return success;
+}
+
+// Receives an MQTT message
+void Fathym::receive(char * topic, byte * payload, unsigned int length) {
+  Serial.println(_id);
 }
 
 // Flashes the debug LED pin a given number of flashes with a given millisecond delay between high/low

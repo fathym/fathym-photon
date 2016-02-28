@@ -171,6 +171,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #define FATHYM_DEBUG_PUBLISH_DELAY 20
 #endif
 
+// Device error states
+#define ERROR_NONE            0
+#define ERROR_JSON_BUFFER_MAX 1
+#define ERROR_CRITICAL        128
+// typedef enum FathymError
+// {
+//   NONE            = 0, // no error state
+//   JSON_BUFFER_MAX = 1, // JSON payload is too large for MQTT header/MQTT max packet size
+//   CRITICAL        = 128  // for testing
+// } FathymError;
+
+class Fathym;
+typedef void (Fathym::*MQTT_HANDLER)(const char * payload);
+
 // Main Fathym class that provides singleton-like access to the API
 class Fathym {
 public:
@@ -180,6 +194,7 @@ public:
 
   // Event Handlers
   void nameHandler(const char * topic, const char * data); // used to retrieve device name
+  //static void mqttHandler(char * topic, byte * payload, unsigned int length); // receives MQTT messages
 
   // Connection
   void beginUpdate(void);
@@ -209,6 +224,7 @@ public:
   void setValue(const char * name, int value, const char * units);
   void setValue(const char * name, long value, const char * units);
   void printJson(void);
+  void receive(char * topic, byte * payload, unsigned int length);
 
 private:
   // Initialize
@@ -219,10 +235,13 @@ private:
   String _idProp = FATHYM_ID_PROPERTY; // the property name to use for the device ID
   String _name; // stores the device's name
   String _timeStamp; // stores the current timestamp string for the last publish
-  String _error; // current error to report to the server, if any
   uint16_t _publishRate; // rate (in seconds) at which auto-publishing occurs if it is enabled
   unsigned long _lastTimeSync; // used to resync to cloud network time to avoid local time drift
   unsigned long _lastBeginUpdate; // used to adjust delay compensation to attempt to regulate a more stable update/publish rate
+  String _sendTopic; // the device-specific send topic
+  String _receiveTopic; // the device-specific receive topic
+  uint8_t _error; // used to indicate the error state of the device (if any)
+  String _errorJson; // string used to send a device error message
 
   // Connection
   char * _server;
@@ -231,6 +250,7 @@ private:
   char * _password;
   MQTT * _mqtt;
   uint16_t _keepAlive;
+  bool _subscribed;
   bool reconnect(void);
 
   // Storage
