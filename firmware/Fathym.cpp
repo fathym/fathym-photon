@@ -3,18 +3,20 @@
 // Handler that receives MQTT messages for this device
 Fathym * instance = NULL;
 
-void mqttHandler(char * topic, byte * payload, unsigned int length) {
-  char p[length + 1];
-  memcpy(p, payload, length);
-  p[length] = NULL;
-  String message(p);
-  Serial.print("received: ");
-  Serial.println(message);
-
+void mqttReceiveHandler(char * topic, byte * payload, unsigned int length) {
   if (instance != NULL) {
       instance->receive(topic, payload, length);
   }
 }
+
+// Timer used to update the MQTT communications loop
+void mqttTimerHandler (void) {
+  if (instance != NULL) {
+    instance->updateMQTT();
+  }
+}
+
+Timer mqttTimer(MQTT_UPDATE_RATE, mqttTimerHandler);
 
 // Constructor
 Fathym::Fathym(char * server, char * username, char * password) {
@@ -75,6 +77,9 @@ void Fathym::init(char * server, uint16_t port, char * username, char * password
 
   // Initialize storage
   //_flash = Devices::createDefaultStore();
+
+  // Start the software timer based loop that will process MQTT communications
+  mqttTimer.start();
 }
 
 // Handler that retrieves the device's name from the cloud
@@ -114,8 +119,7 @@ void Fathym::beginUpdate(void) {
 
   // If connected, update the underlying MQTT client message processing
   if (isConnected()) {
-    _mqtt->loop();
-
+    //_mqtt->loop();
     // Subscribe to receive messages
     if (!_subscribed) {
         _subscribed = _mqtt->subscribe(_receiveTopic);
@@ -156,7 +160,7 @@ bool Fathym::connect(void)
 {
   // If the MQTT client hasn't been created yet, create it
   if (_mqtt == NULL) {
-    _mqtt = new MQTT(_server, _port, mqttHandler);
+    _mqtt = new MQTT(_server, _port, mqttReceiveHandler);
     _mqtt->setKeepAlive(_keepAlive);
   }
 
@@ -190,6 +194,13 @@ bool Fathym::isConnected(void) {
   if (_mqtt == NULL) return false;
   return _mqtt->isConnected();
 }
+
+// Updates the underlying MQTT connection to do keep alive, QoS, and receive messages
+void Fathym::updateMQTT(void) {
+  if (_mqtt == NULL || !_mqtt->isConnected()) return;
+  _mqtt->loop();
+}
+
 
 // Sets the MQTT connection keep alive time in seconds
 void Fathym::setKeepAlive(uint16_t seconds) {
@@ -322,7 +333,15 @@ bool Fathym::publish(const char * topic) {
 
 // Receives an MQTT message
 void Fathym::receive(char * topic, byte * payload, unsigned int length) {
-  Serial.println(_id);
+  char p[length + 1];
+  memcpy(p, payload, length);
+  p[length] = NULL;
+  DynamicJsonBuffer rxBuffer;
+  JsonObject & msg = rxBuffer.parseObject(p);
+
+  if (msg.success()) {
+    // TODO Process commands from server
+  }
 }
 
 // Flashes the debug LED pin a given number of flashes with a given millisecond delay between high/low

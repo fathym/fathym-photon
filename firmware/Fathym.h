@@ -127,6 +127,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #define FATHYM_DEFAULT_PORT 1883
 #endif
 
+// The rate at which the MQTT communication loop updates in milliseconds.
+// This includes ping/keep alive/QoS/receiving messages. It runs on a
+// software timer independent of the main program loop.
+#ifndef MQTT_UPDATE_RATE
+#define MQTT_UPDATE_RATE 1000
+#endif
+
 // The number of seconds to use for the MQTT connection keep alive.
 // The keep alive needs to be longer than your publish rate otherwise
 // the connection will continuously time out/reconnect after one publish.
@@ -194,7 +201,7 @@ public:
 
   // Event Handlers
   void nameHandler(const char * topic, const char * data); // used to retrieve device name
-  //static void mqttHandler(char * topic, byte * payload, unsigned int length); // receives MQTT messages
+  void updateMQTT(void);
 
   // Connection
   void beginUpdate(void);

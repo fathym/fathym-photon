@@ -43,6 +43,11 @@
 // The publish rate (in seconds) for message data (applies when FATHYM_AUTO_PUBLISH is set to true)
 #define FATHYM_PUBLISH_RATE 10
 
+// The rate at which the MQTT communication loop updates in milliseconds.
+// This includes ping/keep alive/QoS/receiving messages. It runs on a
+// software timer independent of the main program loop.
+#define MQTT_UPDATE_RATE 1000
+
 // Default to standard MQTT port
 #define MQTT_DEFAULT_PORT 1883
 
