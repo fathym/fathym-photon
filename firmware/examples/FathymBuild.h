@@ -32,7 +32,7 @@
 #define FATHYM_TIMESTAMP_PROPERTY "ts"
 
 // Whether or not to include the device's free memory in the message for detecting memory leaks
-#define FATHYM_ADD_FREE_MEMORY false
+#define FATHYM_ADD_FREE_MEMORY true
 
 // The name of the free memory property to use
 #define FATHYM_FREE_MEMORY_PROPERTY "mem"
@@ -48,6 +48,11 @@
 // software timer independent of the main program loop.
 #define MQTT_UPDATE_RATE 1000
 
+// The number of times to run the MQTT communications update loop per
+// iteration as defined by MQTT_UPDATE_RATE. The update loop will consume
+// 1 waiting message per update per update cycle.
+#define MQTT_MESSAGES_PER_UPDATE 10
+
 // Default to standard MQTT port
 #define MQTT_DEFAULT_PORT 1883
 
@@ -62,10 +67,7 @@
 // The reserved buffer size in bytes for MQTT data packet buffer.
 // The maximum buffer size available to serialize JSON messages to string
 // is determined by the MQTT_MAX_PACKET_SIZE - MQTT_MAX_HEADER_SIZE.
-#define MQTT_MAX_PACKET_SIZE 640
-
-// Default topic on the message broker to publish messages to
-#define FATHYM_DEFAULT_TOPIC ""
+#define MQTT_MAX_PACKET_SIZE 1024
 
 // Whether or not to use the defined debug pin for Fathym visual status debugging
 #define FATHYM_USE_DEBUG_LED true
@@ -78,3 +80,28 @@
 
 // The number of milliseconds to flash the debug LED to indicate a successful publish
 #define FATHYM_DEBUG_PUBLISH_DELAY 20
+
+//==== Battery Shield ===========================================================================
+/* This section is optional if you're creating a battery powered design that uses the SparkFun
+ * Photon Battery Shield (https://www.sparkfun.com/products/13626). Uncomment all of the
+ * #define lines below to use the battery shield with the Fathym library
+ */
+
+#define FATHYM_USE_BATTERY_POWER true
+
+// Whether or not to report on battery voltage and charge level
+#define FATHYM_MONITOR_BATTERY true
+
+// If monitoring battery power, whether or not to include the voltage level
+#define FATHYM_ADD_BATTERY_VOLTAGE true
+
+// The name of the battery voltage memory property to use
+#define FATHYM_BATTERY_VOLTAGE_PROPERTY "batV"
+
+// If monitoring battery power, whether or not to include the charge level
+#define FATHYM_ADD_BATTERY_CHARGE true
+
+// The name of the battery voltage memory property to use
+#define FATHYM_BATTERY_CHARGE_PROPERTY "batC"
+
+//==== End Battery Shield =======================================================================

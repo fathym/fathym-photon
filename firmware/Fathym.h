@@ -134,6 +134,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #define MQTT_UPDATE_RATE 1000
 #endif
 
+// The number of times to run the MQTT communications update loop per
+// iteration as defined by MQTT_UPDATE_RATE. The update loop will consume
+// 1 waiting message per update per update cycle.
+#ifndef MQTT_MESSAGES_PER_UPDATE
+#define MQTT_MESSAGES_PER_UPDATE 10
+#endif
+
 // The number of seconds to use for the MQTT connection keep alive.
 // The keep alive needs to be longer than your publish rate otherwise
 // the connection will continuously time out/reconnect after one publish.
@@ -151,11 +158,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 // is determined by the MQTT_MAX_PACKET_SIZE - MQTT_MAX_HEADER_SIZE.
 #ifndef MQTT_MAX_PACKET_SIZE
 #define MQTT_MAX_PACKET_SIZE 640
-#endif
-
-// Default topic on the message broker to publish messages to
-#ifndef FATHYM_DEFAULT_TOPIC
-#define FATHYM_DEFAULT_TOPIC ""
 #endif
 
 // Whether or not to use the defined debug pin for Fathym visual status debugging
@@ -182,13 +184,51 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #define ERROR_NONE            0
 #define ERROR_JSON_BUFFER_MAX 1
 #define ERROR_CRITICAL        128
-// typedef enum FathymError
-// {
-//   NONE            = 0, // no error state
-//   JSON_BUFFER_MAX = 1, // JSON payload is too large for MQTT header/MQTT max packet size
-//   CRITICAL        = 128  // for testing
-// } FathymError;
 
+//==== Battery Shield ===========================================================================
+/* This section is optional if you're creating a battery powered design that uses the SparkFun
+ * Photon Battery Shield (https://www.sparkfun.com/products/13626). If you want to enable the
+ * battery features then in your FathymBuild.h file somewhere put: #define FATHYM_USE_BATTERY_POWER
+ */
+
+// Used for battery power
+#ifdef FATHYM_USE_BATTERY_POWER
+
+#ifdef LOCAL_BUILD
+// Used for JSON data communications
+#include "SparkFunMAX17043.h"
+#else
+#include "SparkFunMAX17043/SparkFunMAX17043.h"
+#endif // end include
+
+// Whether or not to report on battery voltage and charge level
+#ifndef FATHYM_MONITOR_BATTERY
+#define FATHYM_MONITOR_BATTERY true
+#endif
+
+// If monitoring battery power, whether or not to include the voltage level
+#ifndef FATHYM_ADD_BATTERY_VOLTAGE
+#define FATHYM_ADD_BATTERY_VOLTAGE true
+#endif
+
+// The name of the battery voltage memory property to use
+#ifndef FATHYM_BATTERY_VOLTAGE_PROPERTY
+#define FATHYM_BATTERY_VOLTAGE_PROPERTY "batV"
+#endif
+
+// If monitoring battery power, whether or not to include the charge level
+#ifndef FATHYM_ADD_BATTERY_CHARGE
+#define FATHYM_ADD_BATTERY_CHARGE true
+#endif
+
+// The name of the battery voltage memory property to use
+#ifndef FATHYM_BATTERY_CHARGE_PROPERTY
+#define FATHYM_BATTERY_CHARGE_PROPERTY "batC"
+#endif
+
+#endif // end FATHYM_USE_BATTERY_POWER
+
+// Fathym API class
 class Fathym;
 typedef void (Fathym::*MQTT_HANDLER)(const char * payload);
 
@@ -196,17 +236,19 @@ typedef void (Fathym::*MQTT_HANDLER)(const char * payload);
 class Fathym {
 public:
   // Constructors
-  Fathym(char * server, char * username, char * password);
-  Fathym(char * server, uint16_t port, char * username, char * password);
+  Fathym();
 
   // Event Handlers
   void nameHandler(const char * topic, const char * data); // used to retrieve device name
-  void updateMQTT(void);
+
+  // Device
+  void setup(void);
 
   // Connection
   void beginUpdate(void);
   void endUpdate(void);
-  bool connect(void);
+  bool connect(char * server, char * username, char * password);
+  bool connect(char * server, uint16_t port, char * username, char * password);
   bool isConnected(void);
   void setKeepAlive(uint16_t seconds);
 
@@ -215,21 +257,21 @@ public:
   bool publishRaw(const char * topic, const char * payload);
   bool publish(void);
   bool publish(const char * topic);
-  void removeValue(const char * name);
-  void setValue(const char * name, bool value);
-  void setValue(const char * name, const char * value);
-  void setValue(const char * name, float value);
-  void setValue(const char * name, float value, uint8_t decimals);
-  void setValue(const char * name, double value);
-  void setValue(const char * name, double value, uint8_t decimals);
-  void setValue(const char * name, int value);
-  void setValue(const char * name, long value);
-  void setValue(const char * name, float value, const char * units);
-  void setValue(const char * name, float value, const char * units, uint8_t decimals);
-  void setValue(const char * name, double value, const char * units);
-  void setValue(const char * name, double value, const char * units, uint8_t decimals);
-  void setValue(const char * name, int value, const char * units);
-  void setValue(const char * name, long value, const char * units);
+  void remove(const char * name);
+  void set(const char * name, bool value);
+  void set(const char * name, const char * value);
+  void set(const char * name, float value);
+  void set(const char * name, float value, uint8_t decimals);
+  void set(const char * name, double value);
+  void set(const char * name, double value, uint8_t decimals);
+  void set(const char * name, int value);
+  void set(const char * name, long value);
+  void set(const char * name, float value, const char * units);
+  void set(const char * name, float value, const char * units, uint8_t decimals);
+  void set(const char * name, double value, const char * units);
+  void set(const char * name, double value, const char * units, uint8_t decimals);
+  void set(const char * name, int value, const char * units);
+  void set(const char * name, long value, const char * units);
   void printJson(void);
   void receive(char * topic, byte * payload, unsigned int length);
 
@@ -270,5 +312,8 @@ private:
   // Utility
   void flash(uint8_t numFlashes, uint8_t delayMs);
 };
+
+// Singleton instance to use
+//extern Fathym fathym; // this is causing an error when building for some reason
 
 #endif

@@ -9,23 +9,9 @@ void mqttReceiveHandler(char * topic, byte * payload, unsigned int length) {
   }
 }
 
-// Timer used to update the MQTT communications loop
-void mqttTimerHandler (void) {
-  if (instance != NULL) {
-    instance->updateMQTT();
-  }
-}
-
-Timer mqttTimer(MQTT_UPDATE_RATE, mqttTimerHandler);
-
 // Constructor
-Fathym::Fathym(char * server, char * username, char * password) {
-  init(server, FATHYM_DEFAULT_PORT, username, password);
-}
-
-// Constructor
-Fathym::Fathym(char * server, uint16_t port, char * username, char * password) {
-  init(server, port, username, password);
+Fathym::Fathym() {
+  init("", FATHYM_DEFAULT_PORT, "", "");
 }
 
 // Global initialization
@@ -77,14 +63,20 @@ void Fathym::init(char * server, uint16_t port, char * username, char * password
 
   // Initialize storage
   //_flash = Devices::createDefaultStore();
-
-  // Start the software timer based loop that will process MQTT communications
-  mqttTimer.start();
 }
 
 // Handler that retrieves the device's name from the cloud
 void Fathym::nameHandler(const char * topic, const char * data) {
   _name = String(data);
+}
+
+// Starts the Fathym library (should be called in setup() function of your main project file)
+void Fathym::setup(void) {
+  // If configured to use batteries, set it up
+  #ifdef FATHYM_USE_BATTERY_POWER
+  lipo.begin(); // start up the battery monitor
+  lipo.quickStart(); // recalibrate for battery SoC
+  #endif
 }
 
 // Begins a Fathym message update cycle; performs connection maintenance and prepares the connection for publishing.
@@ -119,7 +111,6 @@ void Fathym::beginUpdate(void) {
 
   // If connected, update the underlying MQTT client message processing
   if (isConnected()) {
-    //_mqtt->loop();
     // Subscribe to receive messages
     if (!_subscribed) {
         _subscribed = _mqtt->subscribe(_receiveTopic);
@@ -138,7 +129,7 @@ void Fathym::endUpdate(void) {
     publish();
 
     // Start with the ideal update delay in milliseconds
-    long updateDelay = _publishRate * 1000; // convert from seconds to milliseconds
+    unsigned long updateDelay = _publishRate * 1000; // convert from seconds to milliseconds
 
     // Get current time
     unsigned long now = millis();
@@ -150,14 +141,62 @@ void Fathym::endUpdate(void) {
     updateDelay -= deltaTime;
     if (updateDelay < 0) updateDelay = 0;
 
-    // Delay the given amount
-    delay((unsigned long)updateDelay);
+    // Set the target time to delay until before next publish
+    unsigned long targetTime = now + updateDelay;
+    unsigned long lastTime = now;
+
+    // Wait until the next publish time but split it into chunks
+    // so MQTT communications can update throughout.
+    while (lastTime <= targetTime) {
+      // Update MQTT communications
+      int mqttMsgPerUpdate = MQTT_MESSAGES_PER_UPDATE;
+      if (mqttMsgPerUpdate < 0) mqttMsgPerUpdate = 1; // make sure there is a positive number
+
+      // Update communications and consume messages
+      for (int i = 0; i < mqttMsgPerUpdate; i++) {
+          _mqtt->loop();
+      }
+
+      // Get the current time
+      now = millis();
+
+      // Use whichever delay has the smallest increment
+      long mqttUpdateRate = MQTT_UPDATE_RATE;
+      if (mqttUpdateRate < 0) mqttUpdateRate = 1000; // make sure there is a positive update rate and if not, default to 1 second
+      long pubDelay = updateDelay < mqttUpdateRate ? updateDelay : mqttUpdateRate;
+
+      // Compensate for overdelay past the target delay time
+      unsigned long nextTime = now + pubDelay;
+
+      // If the time target given the next delay time overshoots...
+      if (nextTime > targetTime) {
+        // Substract by the overage to even it back out
+        pubDelay -= nextTime - targetTime;
+        if (pubDelay < 0) pubDelay = 0;
+      }
+
+      // Delay until next loop
+      if (pubDelay > 0) delay((unsigned long)pubDelay);
+
+      // Update the last time to the current time
+      lastTime = millis();
+    }
   }
 }
 
 // Connects to the given message broker/server on the given port using the provided username and password.
-bool Fathym::connect(void)
+bool Fathym::connect(char * server, char * username, char * password) {
+  return connect(server, FATHYM_DEFAULT_PORT, username, password);
+}
+
+// Connects to the given message broker/server on the given port using the provided username and password.
+bool Fathym::connect(char * server, uint16_t port, char * username, char * password)
 {
+  _server = server;
+  _port = port;
+  _username = username;
+  _password = password;
+
   // If the MQTT client hasn't been created yet, create it
   if (_mqtt == NULL) {
     _mqtt = new MQTT(_server, _port, mqttReceiveHandler);
@@ -167,17 +206,18 @@ bool Fathym::connect(void)
   // Connect using the MQTT client
   _mqtt->connect(_server, _username, _password);
 
-  // Subscribe to receive messages
-  if (!_subscribed) {
-      _subscribed = _mqtt->subscribe(_receiveTopic);
-  }
-
   // Check for a valid connection state and report accordingly
   if (_mqtt->isConnected()) {
+    // Subscribe to receive messages
+    if (!_subscribed) {
+        _subscribed = _mqtt->subscribe(_receiveTopic);
+    }
+
     flash(8, 50);
     return true;
   }
   else {
+    _subscribed = false;
     flash(8, 500);
     return false;
   }
@@ -185,8 +225,9 @@ bool Fathym::connect(void)
 
 // Reconnects to the last known connection.
 bool Fathym::reconnect(void) {
+  _subscribed = false;
   flash(4, 250);
-  return connect();
+  return connect(_server, _port, _username, _password);
 }
 
 // Determines whether or not Fathym is currently connected to the configured message broker.
@@ -194,13 +235,6 @@ bool Fathym::isConnected(void) {
   if (_mqtt == NULL) return false;
   return _mqtt->isConnected();
 }
-
-// Updates the underlying MQTT connection to do keep alive, QoS, and receive messages
-void Fathym::updateMQTT(void) {
-  if (_mqtt == NULL || !_mqtt->isConnected()) return;
-  _mqtt->loop();
-}
-
 
 // Sets the MQTT connection keep alive time in seconds
 void Fathym::setKeepAlive(uint16_t seconds) {
@@ -279,12 +313,33 @@ bool Fathym::publish(const char * topic) {
     // If set to include the device uptime, include it
     if (FATHYM_ADD_UPTIME) {
       json[FATHYM_UPTIME_PROPERTY] = millis();
+      //set(FATHYM_UPTIME_PROPERTY, (long)millis(), "ms");
     }
 
     // If set to include device free memory, include it
     if (FATHYM_ADD_FREE_MEMORY) {
       json[FATHYM_FREE_MEMORY_PROPERTY] = System.freeMemory();
+      //set(FATHYM_FREE_MEMORY_PROPERTY, (int)System.freeMemory(), "bytes");
     }
+
+    // Include battery information as configured
+    #ifdef FATHYM_USE_BATTERY_POWER
+
+    if (FATHYM_USE_BATTERY_POWER && FATHYM_MONITOR_BATTERY) {
+        // If set to include battery voltage, include it
+        if (FATHYM_ADD_BATTERY_VOLTAGE) {
+          json[FATHYM_BATTERY_VOLTAGE_PROPERTY] = lipo.getVoltage();
+          //set(FATHYM_BATTERY_VOLTAGE_PROPERTY, (float)lipo.getVoltage(), "v");
+        }
+
+        // If set to include battery charge level, include it
+        if (FATHYM_ADD_BATTERY_CHARGE) {
+          json[FATHYM_BATTERY_CHARGE_PROPERTY] = lipo.getSOC();
+          //set(FATHYM_BATTERY_CHARGE_PROPERTY, (float)lipo.getSOC(), "%");
+        }
+    }
+
+    #endif // FATHYM_USE_BATTERY_POWER
 
     // If set to use time stamp, add the current time stamp
     if (FATHYM_ADD_TIMESTAMP) {
@@ -356,65 +411,65 @@ void Fathym::flash(uint8_t numFlashes, uint8_t delayMs) {
   }
 }
 
-// Clears all current message values
-void Fathym::removeValue(const char * name) {
+// Remove a value entry from the message
+void Fathym::remove(const char * name) {
   JsonObject & json = *_json;
   json.remove(name);
 }
 
 // Sets a boolean message value
-void Fathym::setValue(const char * name, bool value) {
+void Fathym::set(const char * name, bool value) {
   JsonObject & json = *_json;
   json[name] = value;
 }
 
 // Sets a string message value
-void Fathym::setValue(const char * name, const char * value) {
+void Fathym::set(const char * name, const char * value) {
   JsonObject & json = *_json;
   json[name] = value;
 }
 
 // Sets a float message value
-void Fathym::setValue(const char * name, float value) {
-  setValue(name, value, FATHYM_DEFAULT_DECIMAL_PLACES);
+void Fathym::set(const char * name, float value) {
+  set(name, value, FATHYM_DEFAULT_DECIMAL_PLACES);
 }
 
 // Sets a float message value and determines the number of decimal places to include
-void Fathym::setValue(const char * name, float value, uint8_t decimals) {
+void Fathym::set(const char * name, float value, uint8_t decimals) {
   JsonObject & json = *_json;
   json[name].set(value, decimals);
 }
 
 // Sets a double message value
-void Fathym::setValue(const char * name, double value) {
-  setValue(name, value, FATHYM_DEFAULT_DECIMAL_PLACES);
+void Fathym::set(const char * name, double value) {
+  set(name, value, FATHYM_DEFAULT_DECIMAL_PLACES);
 }
 
 // Sets a double message value and determines the number of decimal places to include
-void Fathym::setValue(const char * name, double value, uint8_t decimals) {
+void Fathym::set(const char * name, double value, uint8_t decimals) {
   JsonObject & json = *_json;
   json[name].set(value, decimals);
 }
 
-// Sets a int message value
-void Fathym::setValue(const char * name, int value) {
+// Sets an int message value
+void Fathym::set(const char * name, int value) {
   JsonObject & json = *_json;
   json[name] = value;
 }
 
 // Sets a long message value
-void Fathym::setValue(const char * name, long value) {
+void Fathym::set(const char * name, long value) {
   JsonObject & json = *_json;
   json[name] = value;
 }
 
 // Sets a float message value with the associated units
-void Fathym::setValue(const char * name, float value, const char * units) {
-  setValue(name, value, units, FATHYM_DEFAULT_DECIMAL_PLACES);
+void Fathym::set(const char * name, float value, const char * units) {
+  set(name, value, units, FATHYM_DEFAULT_DECIMAL_PLACES);
 }
 
 // Sets a float message value with the associated units and determines the number of decimal places to include
-void Fathym::setValue(const char * name, float value, const char * units, uint8_t decimals) {
+void Fathym::set(const char * name, float value, const char * units, uint8_t decimals) {
   JsonObject & json = *_json;
 
   // Get the nested object for the value/units
@@ -434,12 +489,12 @@ void Fathym::setValue(const char * name, float value, const char * units, uint8_
 }
 
 // Sets a double message value with the associated units
-void Fathym::setValue(const char * name, double value, const char * units) {
-  setValue(name, value, units, FATHYM_DEFAULT_DECIMAL_PLACES);
+void Fathym::set(const char * name, double value, const char * units) {
+  set(name, value, units, FATHYM_DEFAULT_DECIMAL_PLACES);
 }
 
 // Sets a double message value with the associated unit sand determines the number of decimal places to include
-void Fathym::setValue(const char * name, double value, const char * units, uint8_t decimals) {
+void Fathym::set(const char * name, double value, const char * units, uint8_t decimals) {
   JsonObject & json = *_json;
 
   // Get the nested object for the value/units
@@ -459,7 +514,7 @@ void Fathym::setValue(const char * name, double value, const char * units, uint8
 }
 
 // Sets a int message value with the associated units
-void Fathym::setValue(const char * name, int value, const char * units) {
+void Fathym::set(const char * name, int value, const char * units) {
   JsonObject & json = *_json;
 
   // Get the nested object for the value/units
@@ -479,7 +534,7 @@ void Fathym::setValue(const char * name, int value, const char * units) {
 }
 
 // Sets a long message value with the associated units
-void Fathym::setValue(const char * name, long value, const char * units) {
+void Fathym::set(const char * name, long value, const char * units) {
   JsonObject & json = *_json;
 
   // Get the nested object for the value/units
